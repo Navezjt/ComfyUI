@@ -7,6 +7,7 @@ import hashlib
 import traceback
 import math
 import time
+import random
 
 from PIL import Image, ImageOps
 from PIL.PngImagePlugin import PngInfo
@@ -112,7 +113,7 @@ class ConditioningConcat:
     RETURN_TYPES = ("CONDITIONING",)
     FUNCTION = "concat"
 
-    CATEGORY = "advanced/conditioning"
+    CATEGORY = "conditioning"
 
     def concat(self, conditioning_to, conditioning_from):
         out = []
@@ -1116,6 +1117,7 @@ class SaveImage:
     def __init__(self):
         self.output_dir = folder_paths.get_output_directory()
         self.type = "output"
+        self.prefix_append = ""
 
     @classmethod
     def INPUT_TYPES(s):
@@ -1133,6 +1135,7 @@ class SaveImage:
     CATEGORY = "image"
 
     def save_images(self, images, filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None):
+        filename_prefix += self.prefix_append
         full_output_folder, filename, counter, subfolder, filename_prefix = folder_paths.get_save_image_path(filename_prefix, self.output_dir, images[0].shape[1], images[0].shape[0])
         results = list()
         for image in images:
@@ -1160,6 +1163,7 @@ class PreviewImage(SaveImage):
     def __init__(self):
         self.output_dir = folder_paths.get_temp_directory()
         self.type = "temp"
+        self.prefix_append = "_temp_" + ''.join(random.choice("abcdefghijklmnopqrstupvxyz") for x in range(5))
 
     @classmethod
     def INPUT_TYPES(s):
@@ -1404,6 +1408,7 @@ NODE_CLASS_MAPPINGS = {
     "ImagePadForOutpaint": ImagePadForOutpaint,
     "ConditioningAverage ": ConditioningAverage ,
     "ConditioningCombine": ConditioningCombine,
+    "ConditioningConcat": ConditioningConcat,
     "ConditioningSetArea": ConditioningSetArea,
     "ConditioningSetMask": ConditioningSetMask,
     "KSamplerAdvanced": KSamplerAdvanced,
@@ -1437,7 +1442,6 @@ NODE_CLASS_MAPPINGS = {
     "SaveLatent": SaveLatent,
 
     "ConditioningZeroOut": ConditioningZeroOut,
-    "ConditioningConcat": ConditioningConcat,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1462,6 +1466,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CLIPSetLastLayer": "CLIP Set Last Layer",
     "ConditioningCombine": "Conditioning (Combine)",
     "ConditioningAverage ": "Conditioning (Average)",
+    "ConditioningConcat": "Conditioning (Concat)",
     "ConditioningSetArea": "Conditioning (Set Area)",
     "ConditioningSetMask": "Conditioning (Set Mask)",
     "ControlNetApply": "Apply ControlNet",
@@ -1494,7 +1499,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VAEEncodeTiled": "VAE Encode (Tiled)",
 }
 
-def load_custom_node(module_path):
+def load_custom_node(module_path, ignore=set()):
     module_name = os.path.basename(module_path)
     if os.path.isfile(module_path):
         sp = os.path.splitext(module_path)
@@ -1508,7 +1513,9 @@ def load_custom_node(module_path):
         sys.modules[module_name] = module
         module_spec.loader.exec_module(module)
         if hasattr(module, "NODE_CLASS_MAPPINGS") and getattr(module, "NODE_CLASS_MAPPINGS") is not None:
-            NODE_CLASS_MAPPINGS.update(module.NODE_CLASS_MAPPINGS)
+            for name in module.NODE_CLASS_MAPPINGS:
+                if name not in ignore:
+                    NODE_CLASS_MAPPINGS[name] = module.NODE_CLASS_MAPPINGS[name]
             if hasattr(module, "NODE_DISPLAY_NAME_MAPPINGS") and getattr(module, "NODE_DISPLAY_NAME_MAPPINGS") is not None:
                 NODE_DISPLAY_NAME_MAPPINGS.update(module.NODE_DISPLAY_NAME_MAPPINGS)
             return True
@@ -1521,6 +1528,7 @@ def load_custom_node(module_path):
         return False
 
 def load_custom_nodes():
+    base_node_names = set(NODE_CLASS_MAPPINGS.keys())
     node_paths = folder_paths.get_folder_paths("custom_nodes")
     node_import_times = []
     for custom_node_path in node_paths:
@@ -1533,7 +1541,7 @@ def load_custom_nodes():
             if os.path.isfile(module_path) and os.path.splitext(module_path)[1] != ".py": continue
             if module_path.endswith(".disabled"): continue
             time_before = time.perf_counter()
-            success = load_custom_node(module_path)
+            success = load_custom_node(module_path, base_node_names)
             node_import_times.append((time.perf_counter() - time_before, module_path, success))
 
     if len(node_import_times) > 0:
@@ -1555,4 +1563,5 @@ def init_custom_nodes():
     load_custom_node(os.path.join(os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy_extras"), "nodes_model_merging.py"))
     load_custom_node(os.path.join(os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy_extras"), "nodes_tomesd.py"))
     load_custom_node(os.path.join(os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy_extras"), "nodes_clip_sdxl.py"))
+    load_custom_node(os.path.join(os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy_extras"), "nodes_canny.py"))
     load_custom_nodes()
