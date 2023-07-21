@@ -376,7 +376,10 @@ class ModelPatcher:
                     mat3 = v[3].float().to(weight.device)
                     final_shape = [mat2.shape[1], mat2.shape[0], mat3.shape[2], mat3.shape[3]]
                     mat2 = torch.mm(mat2.transpose(0, 1).flatten(start_dim=1), mat3.transpose(0, 1).flatten(start_dim=1)).reshape(final_shape).transpose(0, 1)
-                weight += (alpha * torch.mm(mat1.flatten(start_dim=1), mat2.flatten(start_dim=1))).reshape(weight.shape).type(weight.dtype)
+                try:
+                    weight += (alpha * torch.mm(mat1.flatten(start_dim=1), mat2.flatten(start_dim=1))).reshape(weight.shape).type(weight.dtype)
+                except Exception as e:
+                    print("ERROR", key, e)
             elif len(v) == 8: #lokr
                 w1 = v[0]
                 w2 = v[1]
@@ -407,7 +410,10 @@ class ModelPatcher:
                 if v[2] is not None and dim is not None:
                     alpha *= v[2] / dim
 
-                weight += alpha * torch.kron(w1, w2).reshape(weight.shape).type(weight.dtype)
+                try:
+                    weight += alpha * torch.kron(w1, w2).reshape(weight.shape).type(weight.dtype)
+                except Exception as e:
+                    print("ERROR", key, e)
             else: #loha
                 w1a = v[0]
                 w1b = v[1]
@@ -424,7 +430,11 @@ class ModelPatcher:
                     m1 = torch.mm(w1a.float().to(weight.device), w1b.float().to(weight.device))
                     m2 = torch.mm(w2a.float().to(weight.device), w2b.float().to(weight.device))
 
-                weight += (alpha * m1 * m2).reshape(weight.shape).type(weight.dtype)
+                try:
+                    weight += (alpha * m1 * m2).reshape(weight.shape).type(weight.dtype)
+                except Exception as e:
+                    print("ERROR", key, e)
+
         return weight
 
     def unpatch_model(self):
@@ -1129,12 +1139,14 @@ def load_unet(unet_path): #load unet in diffusers format
     fp16 = model_management.should_use_fp16(model_params=parameters)
 
     match = {}
-    match["context_dim"] = sd["down_blocks.0.attentions.1.transformer_blocks.0.attn2.to_k.weight"].shape[1]
+    match["context_dim"] = sd["down_blocks.1.attentions.1.transformer_blocks.0.attn2.to_k.weight"].shape[1]
     match["model_channels"] = sd["conv_in.weight"].shape[0]
     match["in_channels"] = sd["conv_in.weight"].shape[1]
     match["adm_in_channels"] = None
     if "class_embedding.linear_1.weight" in sd:
         match["adm_in_channels"] = sd["class_embedding.linear_1.weight"].shape[1]
+    elif "add_embedding.linear_1.weight" in sd:
+        match["adm_in_channels"] = sd["add_embedding.linear_1.weight"].shape[1]
 
     SDXL = {'use_checkpoint': False, 'image_size': 32, 'out_channels': 4, 'use_spatial_transformer': True, 'legacy': False,
             'num_classes': 'sequential', 'adm_in_channels': 2816, 'use_fp16': fp16, 'in_channels': 4, 'model_channels': 320,
@@ -1188,6 +1200,7 @@ def load_unet(unet_path): #load unet in diffusers format
             model = model.to(offload_device)
             model.load_model_weights(new_sd, "")
             return ModelPatcher(model, load_device=model_management.get_torch_device(), offload_device=offload_device)
+    print("ERROR UNSUPPORTED UNET", unet_path)
 
 def save_checkpoint(output_path, model, clip, vae, metadata=None):
     try:
