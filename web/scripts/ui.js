@@ -480,7 +480,7 @@ class ComfyList {
 
 	hide() {
 		this.element.style.display = "none";
-		this.button.textContent = "See " + this.#text;
+		this.button.textContent = "View " + this.#text;
 	}
 
 	toggle() {
@@ -540,6 +540,13 @@ export class ComfyUI {
 			name: "When displaying a preview in the image widget, convert it to a lightweight image, e.g. webp, jpeg, webp;50, etc.",
 			type: "text",
 			defaultValue: "",
+		});
+
+		this.settings.addSetting({
+			id: "Comfy.DisableSliders",
+			name: "Disable sliders.",
+			type: "boolean",
+			defaultValue: false,
 		});
 
 		const fileInput = $el("input", {
