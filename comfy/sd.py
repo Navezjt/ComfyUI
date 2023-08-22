@@ -243,6 +243,13 @@ def set_attr(obj, attr, value):
     setattr(obj, attrs[-1], torch.nn.Parameter(value))
     del prev
 
+def get_attr(obj, attr):
+    attrs = attr.split(".")
+    for name in attrs:
+        obj = getattr(obj, name)
+    return obj
+
+
 class ModelPatcher:
     def __init__(self, model, load_device, offload_device, size=0, current_device=None):
         self.size = size
@@ -735,6 +742,7 @@ class ControlBase:
             device = model_management.get_torch_device()
         self.device = device
         self.previous_controlnet = None
+        self.global_average_pooling = False
 
     def set_cond_hint(self, cond_hint, strength=1.0, timestep_percent_range=(1.0, 0.0)):
         self.cond_hint_original = cond_hint
@@ -770,6 +778,51 @@ class ControlBase:
         c.strength = self.strength
         c.timestep_percent_range = self.timestep_percent_range
 
+    def control_merge(self, control_input, control_output, control_prev, output_dtype):
+        out = {'input':[], 'middle':[], 'output': []}
+
+        if control_input is not None:
+            for i in range(len(control_input)):
+                key = 'input'
+                x = control_input[i]
+                if x is not None:
+                    x *= self.strength
+                    if x.dtype != output_dtype:
+                        x = x.to(output_dtype)
+                out[key].insert(0, x)
+
+        if control_output is not None:
+            for i in range(len(control_output)):
+                if i == (len(control_output) - 1):
+                    key = 'middle'
+                    index = 0
+                else:
+                    key = 'output'
+                    index = i
+                x = control_output[i]
+                if x is not None:
+                    if self.global_average_pooling:
+                        x = torch.mean(x, dim=(2, 3), keepdim=True).repeat(1, 1, x.shape[2], x.shape[3])
+
+                    x *= self.strength
+                    if x.dtype != output_dtype:
+                        x = x.to(output_dtype)
+
+                out[key].append(x)
+        if control_prev is not None:
+            for x in ['input', 'middle', 'output']:
+                o = out[x]
+                for i in range(len(control_prev[x])):
+                    prev_val = control_prev[x][i]
+                    if i >= len(o):
+                        o.append(prev_val)
+                    elif prev_val is not None:
+                        if o[i] is None:
+                            o[i] = prev_val
+                        else:
+                            o[i] += prev_val
+        return out
+
 class ControlNet(ControlBase):
     def __init__(self, control_model, global_average_pooling=False, device=None):
         super().__init__(device)
@@ -798,41 +851,13 @@ class ControlNet(ControlBase):
         if x_noisy.shape[0] != self.cond_hint.shape[0]:
             self.cond_hint = broadcast_image_to(self.cond_hint, x_noisy.shape[0], batched_number)
 
-        if self.control_model.dtype == torch.float16:
-            precision_scope = torch.autocast
-        else:
-            precision_scope = contextlib.nullcontext
 
-        with precision_scope(model_management.get_autocast_device(self.device)):
-            context = torch.cat(cond['c_crossattn'], 1)
-            y = cond.get('c_adm', None)
-            control = self.control_model(x=x_noisy, hint=self.cond_hint, timesteps=t, context=context, y=y)
-        out = {'middle':[], 'output': []}
-        autocast_enabled = torch.is_autocast_enabled()
-
-        for i in range(len(control)):
-            if i == (len(control) - 1):
-                key = 'middle'
-                index = 0
-            else:
-                key = 'output'
-                index = i
-            x = control[i]
-            if self.global_average_pooling:
-                x = torch.mean(x, dim=(2, 3), keepdim=True).repeat(1, 1, x.shape[2], x.shape[3])
-
-            x *= self.strength
-            if x.dtype != output_dtype and not autocast_enabled:
-                x = x.to(output_dtype)
-
-            if control_prev is not None and key in control_prev:
-                prev = control_prev[key][index]
-                if prev is not None:
-                    x += prev
-            out[key].append(x)
-        if control_prev is not None and 'input' in control_prev:
-            out['input'] = control_prev['input']
-        return out
+        context = torch.cat(cond['c_crossattn'], 1)
+        y = cond.get('c_adm', None)
+        if y is not None:
+            y = y.to(self.control_model.dtype)
+        control = self.control_model(x=x_noisy.to(self.control_model.dtype), hint=self.cond_hint, timesteps=t, context=context.to(self.control_model.dtype), y=y)
+        return self.control_merge(None, control, control_prev, output_dtype)
 
     def copy(self):
         c = ControlNet(self.control_model, global_average_pooling=self.global_average_pooling)
@@ -859,9 +884,9 @@ class ControlLoraOps:
 
         def forward(self, input):
             if self.up is not None:
-                return torch.nn.functional.linear(input, self.weight + (torch.mm(self.up.flatten(start_dim=1), self.down.flatten(start_dim=1))).reshape(self.weight.shape).type(self.weight.dtype), self.bias)
+                return torch.nn.functional.linear(input, self.weight.to(input.device) + (torch.mm(self.up.flatten(start_dim=1), self.down.flatten(start_dim=1))).reshape(self.weight.shape).type(input.dtype), self.bias)
             else:
-                return torch.nn.functional.linear(input, self.weight, self.bias)
+                return torch.nn.functional.linear(input, self.weight.to(input.device), self.bias)
 
     class Conv2d(torch.nn.Module):
         def __init__(
@@ -898,9 +923,9 @@ class ControlLoraOps:
 
         def forward(self, input):
             if self.up is not None:
-                return torch.nn.functional.conv2d(input, self.weight + (torch.mm(self.up.flatten(start_dim=1), self.down.flatten(start_dim=1))).reshape(self.weight.shape).type(self.weight.dtype), self.bias, self.stride, self.padding, self.dilation, self.groups)
+                return torch.nn.functional.conv2d(input, self.weight.to(input.device) + (torch.mm(self.up.flatten(start_dim=1), self.down.flatten(start_dim=1))).reshape(self.weight.shape).type(input.dtype), self.bias, self.stride, self.padding, self.dilation, self.groups)
             else:
-                return torch.nn.functional.conv2d(input, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+                return torch.nn.functional.conv2d(input, self.weight.to(input.device), self.bias, self.stride, self.padding, self.dilation, self.groups)
 
     def conv_nd(self, dims, *args, **kwargs):
         if dims == 2:
@@ -922,22 +947,28 @@ class ControlLora(ControlNet):
         controlnet_config["hint_channels"] = self.control_weights["input_hint_block.0.weight"].shape[1]
         controlnet_config["operations"] = ControlLoraOps()
         self.control_model = cldm.ControlNet(**controlnet_config)
-        if model_management.should_use_fp16():
-            self.control_model.half()
+        dtype = model.get_dtype()
+        self.control_model.to(dtype)
         self.control_model.to(model_management.get_torch_device())
         diffusion_model = model.diffusion_model
         sd = diffusion_model.state_dict()
         cm = self.control_model.state_dict()
 
         for k in sd:
+            weight = sd[k]
+            if weight.device == torch.device("meta"): #lowvram NOTE: this depends on the inner working of the accelerate library so it might break.
+                key_split = k.split('.')              # I have no idea why they don't just leave the weight there instead of using the meta device.
+                op = get_attr(diffusion_model, '.'.join(key_split[:-1]))
+                weight = op._hf_hook.weights_map[key_split[-1]]
+
             try:
-                set_attr(self.control_model, k, sd[k])
+                set_attr(self.control_model, k, weight)
             except:
                 pass
 
         for k in self.control_weights:
             if k not in {"lora_controlnet"}:
-                set_attr(self.control_model, k, self.control_weights[k].to(model_management.get_torch_device()))
+                set_attr(self.control_model, k, self.control_weights[k].to(dtype).to(model_management.get_torch_device()))
 
     def copy(self):
         c = ControlLora(self.control_weights, global_average_pooling=self.global_average_pooling)
@@ -1091,38 +1122,13 @@ class T2IAdapter(ControlBase):
         if x_noisy.shape[0] != self.cond_hint.shape[0]:
             self.cond_hint = broadcast_image_to(self.cond_hint, x_noisy.shape[0], batched_number)
         if self.control_input is None:
+            self.t2i_model.to(x_noisy.dtype)
             self.t2i_model.to(self.device)
-            self.control_input = self.t2i_model(self.cond_hint)
+            self.control_input = self.t2i_model(self.cond_hint.to(x_noisy.dtype))
             self.t2i_model.cpu()
 
-        output_dtype = x_noisy.dtype
-        out = {'input':[]}
-
-        autocast_enabled = torch.is_autocast_enabled()
-        for i in range(len(self.control_input)):
-            key = 'input'
-            x = self.control_input[i] * self.strength
-            if x.dtype != output_dtype and not autocast_enabled:
-                x = x.to(output_dtype)
-
-            if control_prev is not None and key in control_prev:
-                index = len(control_prev[key]) - i * 3 - 3
-                prev = control_prev[key][index]
-                if prev is not None:
-                    x += prev
-            out[key].insert(0, None)
-            out[key].insert(0, None)
-            out[key].insert(0, x)
-
-        if control_prev is not None and 'input' in control_prev:
-            for i in range(len(out['input'])):
-                if out['input'][i] is None:
-                    out['input'][i] = control_prev['input'][i]
-        if control_prev is not None and 'middle' in control_prev:
-            out['middle'] = control_prev['middle']
-        if control_prev is not None and 'output' in control_prev:
-            out['output'] = control_prev['output']
-        return out
+        control_input = list(map(lambda a: None if a is None else a.clone(), self.control_input))
+        return self.control_merge(control_input, None, control_prev, x_noisy.dtype)
 
     def copy(self):
         c = T2IAdapter(self.t2i_model, self.channels_in)
