@@ -1788,6 +1788,7 @@ def init_custom_nodes():
         "nodes_upscale_model.py",
         "nodes_post_processing.py",
         "nodes_mask.py",
+        "nodes_compositing.py",
         "nodes_rebatch.py",
         "nodes_model_merging.py",
         "nodes_tomesd.py",
