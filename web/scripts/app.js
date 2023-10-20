@@ -492,7 +492,7 @@ export class ComfyApp {
 				}
 
 				if (this.imgs && this.imgs.length) {
-					const canvas = graph.list_of_graphcanvas[0];
+					const canvas = app.graph.list_of_graphcanvas[0];
 					const mouse = canvas.graph_mouse;
 					if (!canvas.pointer_is_down && this.pointerDown) {
 						if (mouse[0] === this.pointerDown.pos[0] && mouse[1] === this.pointerDown.pos[1]) {
@@ -923,6 +923,16 @@ export class ComfyApp {
 							} else {
 								this.selected_nodes[i].mode = 4; // never
 							}
+						}
+					}
+					block_default = true;
+				}
+
+				// Alt + C collapse/uncollapse
+				if (e.key === 'c' && e.altKey) {
+					if (this.selected_nodes) {
+						for (var i in this.selected_nodes) {
+							this.selected_nodes[i].collapse()
 						}
 					}
 					block_default = true;
