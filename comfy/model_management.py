@@ -508,6 +508,12 @@ def text_encoder_dtype(device=None):
     else:
         return torch.float32
 
+def intermediate_device():
+    if args.gpu_only:
+        return get_torch_device()
+    else:
+        return torch.device("cpu")
+
 def vae_device():
     return get_torch_device()
 
@@ -547,15 +553,19 @@ def cast_to_device(tensor, device, dtype, copy=False):
         elif is_intel_xpu():
             device_supports_cast = True
 
+    non_blocking = True
+    if is_device_mps(device):
+        non_blocking = False #pytorch bug? mps doesn't support non blocking
+
     if device_supports_cast:
         if copy:
             if tensor.device == device:
-                return tensor.to(dtype, copy=copy)
-            return tensor.to(device, copy=copy).to(dtype)
+                return tensor.to(dtype, copy=copy, non_blocking=non_blocking)
+            return tensor.to(device, copy=copy, non_blocking=non_blocking).to(dtype, non_blocking=non_blocking)
         else:
-            return tensor.to(device).to(dtype)
+            return tensor.to(device, non_blocking=non_blocking).to(dtype, non_blocking=non_blocking)
     else:
-        return tensor.to(dtype).to(device, copy=copy)
+        return tensor.to(device, dtype, copy=copy, non_blocking=non_blocking)
 
 def xformers_enabled():
     global directml_enabled

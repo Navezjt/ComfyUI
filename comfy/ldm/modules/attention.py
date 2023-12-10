@@ -112,10 +112,13 @@ def attention_basic(q, k, v, heads, mask=None):
     del q, k
 
     if exists(mask):
-        mask = rearrange(mask, 'b ... -> b (...)')
-        max_neg_value = -torch.finfo(sim.dtype).max
-        mask = repeat(mask, 'b j -> (b h) () j', h=h)
-        sim.masked_fill_(~mask, max_neg_value)
+        if mask.dtype == torch.bool:
+            mask = rearrange(mask, 'b ... -> b (...)') #TODO: check if this bool part matches pytorch attention
+            max_neg_value = -torch.finfo(sim.dtype).max
+            mask = repeat(mask, 'b j -> (b h) () j', h=h)
+            sim.masked_fill_(~mask, max_neg_value)
+        else:
+            sim += mask
 
     # attention, what we cannot get enough of
     sim = sim.softmax(dim=-1)
@@ -340,6 +343,18 @@ else:
 if model_management.pytorch_attention_enabled():
     optimized_attention_masked = attention_pytorch
 
+def optimized_attention_for_device(device, mask=False):
+    if device == torch.device("cpu"): #TODO
+        if model_management.pytorch_attention_enabled():
+            return attention_pytorch
+        else:
+            return attention_basic
+    if mask:
+        return optimized_attention_masked
+
+    return optimized_attention
+
+
 class CrossAttention(nn.Module):
     def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0., dtype=None, device=None, operations=comfy.ops):
         super().__init__()
@@ -384,7 +399,7 @@ class BasicTransformerBlock(nn.Module):
         self.is_res = inner_dim == dim
 
         if self.ff_in:
-            self.norm_in = nn.LayerNorm(dim, dtype=dtype, device=device)
+            self.norm_in = operations.LayerNorm(dim, dtype=dtype, device=device)
             self.ff_in = FeedForward(dim, dim_out=inner_dim, dropout=dropout, glu=gated_ff, dtype=dtype, device=device, operations=operations)
 
         self.disable_self_attn = disable_self_attn
