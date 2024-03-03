@@ -720,9 +720,9 @@ def should_use_fp16(device=None, model_params=0, prioritize_performance=True, ma
     if FORCE_FP16:
         return True
 
-    if device is not None: #TODO
+    if device is not None:
         if is_device_mps(device):
-            return False
+            return True
 
     if FORCE_FP32:
         return False
@@ -730,8 +730,11 @@ def should_use_fp16(device=None, model_params=0, prioritize_performance=True, ma
     if directml_enabled:
         return False
 
-    if cpu_mode() or mps_mode():
-        return False #TODO ?
+    if mps_mode():
+        return True
+
+    if cpu_mode():
+        return False
 
     if is_intel_xpu():
         return True
@@ -750,7 +753,7 @@ def should_use_fp16(device=None, model_params=0, prioritize_performance=True, ma
     #FP16 is confirmed working on a 1080 (GP104) but it's a bit slower than FP32 so it should only be enabled
     #when the model doesn't actually fit on the card
     #TODO: actually test if GP106 and others have the same type of behavior
-    nvidia_10_series = ["1080", "1070", "titan x", "p3000", "p3200", "p4000", "p4200", "p5000", "p5200", "p6000", "1060", "1050"]
+    nvidia_10_series = ["1080", "1070", "titan x", "p3000", "p3200", "p4000", "p4200", "p5000", "p5200", "p6000", "1060", "1050", "p40", "p100", "p6", "p4"]
     for x in nvidia_10_series:
         if x in props.name.lower():
             fp16_works = True
