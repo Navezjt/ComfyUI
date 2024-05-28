@@ -53,7 +53,7 @@ Workflow examples can be found on the [Examples page](https://comfyanonymous.git
 | Ctrl + M                           | Mute/unmute selected nodes                                                                                         |
 | Ctrl + B                           | Bypass selected nodes (acts like the node was removed from the graph and the wires reconnected through)            |
 | Delete/Backspace                   | Delete selected nodes                                                                                              |
-| Ctrl + Delete/Backspace            | Delete the current graph                                                                                           |
+| Ctrl + Backspace                   | Delete the current graph                                                                                           |
 | Space                              | Move the canvas around when held and moving the cursor                                                             |
 | Ctrl/Shift + Click                 | Add clicked node to selection                                                                                      |
 | Ctrl + C/Ctrl + V                  | Copy and paste selected nodes (without maintaining connections to outputs of unselected nodes)                     |
@@ -206,12 +206,6 @@ To use a textual inversion concepts/embeddings in a text prompt put them in the 
 
 ```embedding:embedding_filename.pt```
 
-
-## How to increase generation speed?
-
-On non Nvidia hardware you can set this command line setting to disable the upcasting to fp32 in some cross attention operations which will increase your speed. Note that this will very likely give you black images on SD2.x models. If you use xformers or pytorch attention this option does not do anything.
-
-```--dont-upcast-attention```
 
 ## How to show high-quality previews?
 
