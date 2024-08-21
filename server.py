@@ -12,7 +12,6 @@ import json
 import glob
 import struct
 import ssl
-import hashlib
 from PIL import Image, ImageOps
 from PIL.PngImagePlugin import PngInfo
 from io import BytesIO
@@ -25,8 +24,13 @@ import mimetypes
 from comfy.cli_args import args
 import comfy.utils
 import comfy.model_management
-
+import node_helpers
+from app.frontend_management import FrontendManager
 from app.user_manager import UserManager
+from model_filemanager import download_model, DownloadModelStatus
+from typing import Optional
+from api_server.routes.internal.internal_routes import InternalRoutes
+
 
 class BinaryEventTypes:
     PREVIEW_IMAGE = 1
@@ -70,10 +74,12 @@ class PromptServer():
         mimetypes.types_map['.js'] = 'application/javascript; charset=utf-8'
 
         self.user_manager = UserManager()
+        self.internal_routes = InternalRoutes()
         self.supports = ["custom_nodes_from_web"]
         self.prompt_queue = None
         self.loop = loop
         self.messages = asyncio.Queue()
+        self.client_session:Optional[aiohttp.ClientSession] = None
         self.number = 0
 
         middlewares = [cache_control]
@@ -83,8 +89,12 @@ class PromptServer():
         max_upload_size = round(args.max_upload_size * 1024 * 1024)
         self.app = web.Application(client_max_size=max_upload_size, middlewares=middlewares)
         self.sockets = dict()
-        self.web_root = os.path.join(os.path.dirname(
-            os.path.realpath(__file__)), "web")
+        self.web_root = (
+            FrontendManager.init_frontend(args.front_end_version)
+            if args.front_end_root is None
+            else args.front_end_root
+        )
+        logging.info(f"[Prompt Server] web root: {self.web_root}")
         routes = web.RouteTableDef()
         self.routes = routes
         self.last_node_id = None
@@ -121,12 +131,24 @@ class PromptServer():
 
         @routes.get("/")
         async def get_root(request):
-            return web.FileResponse(os.path.join(self.web_root, "index.html"))
+            response = web.FileResponse(os.path.join(self.web_root, "index.html"))
+            response.headers['Cache-Control'] = 'no-cache'
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
 
         @routes.get("/embeddings")
         def get_embeddings(self):
             embeddings = folder_paths.get_filename_list("embeddings")
             return web.json_response(list(map(lambda a: os.path.splitext(a)[0], embeddings)))
+
+        @routes.get("/models/{folder}")
+        async def get_models(request):
+            folder = request.match_info.get("folder", None)
+            if not folder in folder_paths.folder_names_and_paths:
+                return web.Response(status=404)
+            files = folder_paths.get_filename_list(folder)
+            return web.json_response(files)
 
         @routes.get("/extensions")
         async def get_extensions(request):
@@ -156,10 +178,12 @@ class PromptServer():
             return type_dir, dir_type
 
         def compare_image_hash(filepath, image):
+            hasher = node_helpers.hasher()
+            
             # function to compare hashes of two images to see if it already exists, fix to #3465
             if os.path.exists(filepath):
-                a = hashlib.sha256()
-                b = hashlib.sha256()
+                a = hasher()
+                b = hasher()
                 with open(filepath, "rb") as f:
                     a.update(f.read())
                     b.update(image.file.read())
@@ -410,6 +434,7 @@ class PromptServer():
             obj_class = nodes.NODE_CLASS_MAPPINGS[node_class]
             info = {}
             info['input'] = obj_class.INPUT_TYPES()
+            info['input_order'] = {key: list(value.keys()) for (key, value) in obj_class.INPUT_TYPES().items()}
             info['output'] = obj_class.RETURN_TYPES
             info['output_is_list'] = obj_class.OUTPUT_IS_LIST if hasattr(obj_class, 'OUTPUT_IS_LIST') else [False] * len(obj_class.RETURN_TYPES)
             info['output_name'] = obj_class.RETURN_NAMES if hasattr(obj_class, 'RETURN_NAMES') else info['output']
@@ -425,6 +450,14 @@ class PromptServer():
 
             if hasattr(obj_class, 'CATEGORY'):
                 info['category'] = obj_class.CATEGORY
+
+            if hasattr(obj_class, 'OUTPUT_TOOLTIPS'):
+                info['output_tooltips'] = obj_class.OUTPUT_TOOLTIPS
+
+            if getattr(obj_class, "DEPRECATED", False):
+                info['deprecated'] = True
+            if getattr(obj_class, "EXPERIMENTAL", False):
+                info['experimental'] = True
             return info
 
         @routes.get("/object_info")
@@ -547,9 +580,40 @@ class PromptServer():
                     self.prompt_queue.delete_history_item(id_to_delete)
 
             return web.Response(status=200)
+        
+        # Internal route. Should not be depended upon and is subject to change at any time.
+        # TODO(robinhuang): Move to internal route table class once we refactor PromptServer to pass around Websocket.
+        @routes.post("/internal/models/download")
+        async def download_handler(request):
+            async def report_progress(filename: str, status: DownloadModelStatus):
+                await self.send_json("download_progress", status.to_dict())
+
+            data = await request.json()
+            url = data.get('url')
+            model_directory = data.get('model_directory')
+            model_filename = data.get('model_filename')
+            progress_interval = data.get('progress_interval', 1.0) # In seconds, how often to report download progress.
+
+            if not url or not model_directory or not model_filename:
+                return web.json_response({"status": "error", "message": "Missing URL or folder path or filename"}, status=400)
+
+            session = self.client_session
+            if session is None:
+                logging.error("Client session is not initialized")
+                return web.Response(status=500)
+            
+            task = asyncio.create_task(download_model(lambda url: session.get(url), model_filename, url, model_directory, report_progress, progress_interval))
+            await task
+
+            return web.json_response(task.result().to_dict())
+
+    async def setup(self):
+        timeout = aiohttp.ClientTimeout(total=None) # no timeout
+        self.client_session = aiohttp.ClientSession(timeout=timeout)
 
     def add_routes(self):
         self.user_manager.add_routes(self.routes)
+        self.app.add_subapp('/internal', self.internal_routes.get_app())
 
         # Prefix every route with /api for easier matching for delegation.
         # This is very useful for frontend dev server, which need to forward
@@ -667,6 +731,9 @@ class PromptServer():
 
         site = web.TCPSite(runner, address, port, ssl_context=ssl_ctx)
         await site.start()
+
+        self.address = address
+        self.port = port
 
         if verbose:
             logging.info("Starting server\n")
