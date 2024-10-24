@@ -1,7 +1,8 @@
 from aiohttp import web
 from typing import Optional
-from folder_paths import models_dir, user_directory, output_directory
+from folder_paths import models_dir, user_directory, output_directory, folder_names_and_paths
 from api_server.services.file_service import FileService
+import app.logger
 
 class InternalRoutes:
     '''
@@ -31,6 +32,16 @@ class InternalRoutes:
             except Exception as e:
                 return web.json_response({"error": str(e)}, status=500)
 
+        @self.routes.get('/logs')
+        async def get_logs(request):
+            return web.json_response(app.logger.get_logs())
+
+        @self.routes.get('/folder_paths')
+        async def get_folder_paths(request):
+            response = {}
+            for key in folder_names_and_paths:
+                response[key] = folder_names_and_paths[key][0]
+            return web.json_response(response)
 
     def get_app(self):
         if self._app is None:
