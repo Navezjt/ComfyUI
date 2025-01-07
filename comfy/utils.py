@@ -386,6 +386,77 @@ def mmdit_to_diffusers(mmdit_config, output_prefix=""):
 
     return key_map
 
+PIXART_MAP_BASIC = {
+    ("csize_embedder.mlp.0.weight", "adaln_single.emb.resolution_embedder.linear_1.weight"),
+    ("csize_embedder.mlp.0.bias", "adaln_single.emb.resolution_embedder.linear_1.bias"),
+    ("csize_embedder.mlp.2.weight", "adaln_single.emb.resolution_embedder.linear_2.weight"),
+    ("csize_embedder.mlp.2.bias", "adaln_single.emb.resolution_embedder.linear_2.bias"),
+    ("ar_embedder.mlp.0.weight", "adaln_single.emb.aspect_ratio_embedder.linear_1.weight"),
+    ("ar_embedder.mlp.0.bias", "adaln_single.emb.aspect_ratio_embedder.linear_1.bias"),
+    ("ar_embedder.mlp.2.weight", "adaln_single.emb.aspect_ratio_embedder.linear_2.weight"),
+    ("ar_embedder.mlp.2.bias", "adaln_single.emb.aspect_ratio_embedder.linear_2.bias"),
+    ("x_embedder.proj.weight", "pos_embed.proj.weight"),
+    ("x_embedder.proj.bias", "pos_embed.proj.bias"),
+    ("y_embedder.y_embedding", "caption_projection.y_embedding"),
+    ("y_embedder.y_proj.fc1.weight", "caption_projection.linear_1.weight"),
+    ("y_embedder.y_proj.fc1.bias", "caption_projection.linear_1.bias"),
+    ("y_embedder.y_proj.fc2.weight", "caption_projection.linear_2.weight"),
+    ("y_embedder.y_proj.fc2.bias", "caption_projection.linear_2.bias"),
+    ("t_embedder.mlp.0.weight", "adaln_single.emb.timestep_embedder.linear_1.weight"),
+    ("t_embedder.mlp.0.bias", "adaln_single.emb.timestep_embedder.linear_1.bias"),
+    ("t_embedder.mlp.2.weight", "adaln_single.emb.timestep_embedder.linear_2.weight"),
+    ("t_embedder.mlp.2.bias", "adaln_single.emb.timestep_embedder.linear_2.bias"),
+    ("t_block.1.weight", "adaln_single.linear.weight"),
+    ("t_block.1.bias", "adaln_single.linear.bias"),
+    ("final_layer.linear.weight", "proj_out.weight"),
+    ("final_layer.linear.bias", "proj_out.bias"),
+    ("final_layer.scale_shift_table", "scale_shift_table"),
+}
+
+PIXART_MAP_BLOCK = {
+    ("scale_shift_table", "scale_shift_table"),
+    ("attn.proj.weight", "attn1.to_out.0.weight"),
+    ("attn.proj.bias", "attn1.to_out.0.bias"),
+    ("mlp.fc1.weight", "ff.net.0.proj.weight"),
+    ("mlp.fc1.bias", "ff.net.0.proj.bias"),
+    ("mlp.fc2.weight", "ff.net.2.weight"),
+    ("mlp.fc2.bias", "ff.net.2.bias"),
+    ("cross_attn.proj.weight" ,"attn2.to_out.0.weight"),
+    ("cross_attn.proj.bias"   ,"attn2.to_out.0.bias"),
+}
+
+def pixart_to_diffusers(mmdit_config, output_prefix=""):
+    key_map = {}
+
+    depth = mmdit_config.get("depth", 0)
+    offset = mmdit_config.get("hidden_size", 1152)
+
+    for i in range(depth):
+        block_from = "transformer_blocks.{}".format(i)
+        block_to = "{}blocks.{}".format(output_prefix, i)
+
+        for end in ("weight", "bias"):
+            s = "{}.attn1.".format(block_from)
+            qkv = "{}.attn.qkv.{}".format(block_to, end)
+            key_map["{}to_q.{}".format(s, end)] = (qkv, (0, 0, offset))
+            key_map["{}to_k.{}".format(s, end)] = (qkv, (0, offset, offset))
+            key_map["{}to_v.{}".format(s, end)] = (qkv, (0, offset * 2, offset))
+
+            s = "{}.attn2.".format(block_from)
+            q = "{}.cross_attn.q_linear.{}".format(block_to, end)
+            kv = "{}.cross_attn.kv_linear.{}".format(block_to, end)
+
+            key_map["{}to_q.{}".format(s, end)] = q
+            key_map["{}to_k.{}".format(s, end)] = (kv, (0, 0, offset))
+            key_map["{}to_v.{}".format(s, end)] = (kv, (0, offset, offset))
+
+        for k in PIXART_MAP_BLOCK:
+            key_map["{}.{}".format(block_from, k[1])] = "{}.{}".format(block_to, k[0])
+
+    for k in PIXART_MAP_BASIC:
+        key_map[k[1]] = "{}{}".format(output_prefix, k[0])
+
+    return key_map
 
 def auraflow_to_diffusers(mmdit_config, output_prefix=""):
     n_double_layers = mmdit_config.get("n_double_layers", 0)
@@ -622,7 +693,25 @@ def copy_to_param(obj, attr, value):
     prev = getattr(obj, attrs[-1])
     prev.data.copy_(value)
 
-def get_attr(obj, attr):
+def get_attr(obj, attr: str):
+    """Retrieves a nested attribute from an object using dot notation.
+
+    Args:
+        obj: The object to get the attribute from
+        attr (str): The attribute path using dot notation (e.g. "model.layer.weight")
+
+    Returns:
+        The value of the requested attribute
+
+    Example:
+        model = MyModel()
+        weight = get_attr(model, "layer1.conv.weight")
+        # Equivalent to: model.layer1.conv.weight
+
+    Important:
+        Always prefer `comfy.model_patcher.ModelPatcher.get_model_object` when
+        accessing nested model objects under `ModelPatcher.model`.
+    """
     attrs = attr.split(".")
     for name in attrs:
         obj = getattr(obj, name)
@@ -631,7 +720,7 @@ def get_attr(obj, attr):
 def bislerp(samples, width, height):
     def slerp(b1, b2, r):
         '''slerps batches b1, b2 according to ratio r, batches should be flat e.g. NxC'''
-        
+
         c = b1.shape[-1]
 
         #norms
@@ -656,16 +745,16 @@ def bislerp(samples, width, height):
         res *= (b1_norms * (1.0-r) + b2_norms * r).expand(-1,c)
 
         #edge cases for same or polar opposites
-        res[dot > 1 - 1e-5] = b1[dot > 1 - 1e-5] 
+        res[dot > 1 - 1e-5] = b1[dot > 1 - 1e-5]
         res[dot < 1e-5 - 1] = (b1 * (1.0-r) + b2 * r)[dot < 1e-5 - 1]
         return res
-    
+
     def generate_bilinear_data(length_old, length_new, device):
         coords_1 = torch.arange(length_old, dtype=torch.float32, device=device).reshape((1,1,1,-1))
         coords_1 = torch.nn.functional.interpolate(coords_1, size=(1, length_new), mode="bilinear")
         ratios = coords_1 - coords_1.floor()
         coords_1 = coords_1.to(torch.int64)
-        
+
         coords_2 = torch.arange(length_old, dtype=torch.float32, device=device).reshape((1,1,1,-1)) + 1
         coords_2[:,:,:,-1] -= 1
         coords_2 = torch.nn.functional.interpolate(coords_2, size=(1, length_new), mode="bilinear")
@@ -676,7 +765,7 @@ def bislerp(samples, width, height):
     samples = samples.float()
     n,c,h,w = samples.shape
     h_new, w_new = (height, width)
-    
+
     #linear w
     ratios, coords_1, coords_2 = generate_bilinear_data(w, w_new, samples.device)
     coords_1 = coords_1.expand((n, c, h, -1))
@@ -751,7 +840,7 @@ def get_tiled_scale_steps(width, height, tile_x, tile_y, overlap):
     return rows * cols
 
 @torch.inference_mode()
-def tiled_scale_multidim(samples, function, tile=(64, 64), overlap=8, upscale_amount=4, out_channels=3, output_device="cpu", downscale=False, pbar=None):
+def tiled_scale_multidim(samples, function, tile=(64, 64), overlap=8, upscale_amount=4, out_channels=3, output_device="cpu", downscale=False, index_formulas=None, pbar=None):
     dims = len(tile)
 
     if not (isinstance(upscale_amount, (tuple, list))):
@@ -759,6 +848,12 @@ def tiled_scale_multidim(samples, function, tile=(64, 64), overlap=8, upscale_am
 
     if not (isinstance(overlap, (tuple, list))):
         overlap = [overlap] * dims
+
+    if index_formulas is None:
+        index_formulas = upscale_amount
+
+    if not (isinstance(index_formulas, (tuple, list))):
+        index_formulas = [index_formulas] * dims
 
     def get_upscale(dim, val):
         up = upscale_amount[dim]
@@ -774,10 +869,26 @@ def tiled_scale_multidim(samples, function, tile=(64, 64), overlap=8, upscale_am
         else:
             return val / up
 
+    def get_upscale_pos(dim, val):
+        up = index_formulas[dim]
+        if callable(up):
+            return up(val)
+        else:
+            return up * val
+
+    def get_downscale_pos(dim, val):
+        up = index_formulas[dim]
+        if callable(up):
+            return up(val)
+        else:
+            return val / up
+
     if downscale:
         get_scale = get_downscale
+        get_pos = get_downscale_pos
     else:
         get_scale = get_upscale
+        get_pos = get_upscale_pos
 
     def mult_list_upscale(a):
         out = []
@@ -800,17 +911,17 @@ def tiled_scale_multidim(samples, function, tile=(64, 64), overlap=8, upscale_am
         out = torch.zeros([s.shape[0], out_channels] + mult_list_upscale(s.shape[2:]), device=output_device)
         out_div = torch.zeros([s.shape[0], out_channels] + mult_list_upscale(s.shape[2:]), device=output_device)
 
-        positions = [range(0, s.shape[d+2], tile[d] - overlap[d]) if s.shape[d+2] > tile[d] else [0] for d in range(dims)]
+        positions = [range(0, s.shape[d+2] - overlap[d], tile[d] - overlap[d]) if s.shape[d+2] > tile[d] else [0] for d in range(dims)]
 
         for it in itertools.product(*positions):
             s_in = s
             upscaled = []
 
             for d in range(dims):
-                pos = max(0, min(s.shape[d + 2] - (overlap[d] + 1), it[d]))
+                pos = max(0, min(s.shape[d + 2] - overlap[d], it[d]))
                 l = min(tile[d], s.shape[d + 2] - pos)
                 s_in = s_in.narrow(d + 2, pos, l)
-                upscaled.append(round(get_scale(d, pos)))
+                upscaled.append(round(get_pos(d, pos)))
 
             ps = function(s_in).to(output_device)
             mask = torch.ones_like(ps)

@@ -26,6 +26,7 @@ from comfy.ldm.modules.diffusionmodules.upscaling import ImageConcatWithNoiseAug
 from comfy.ldm.modules.diffusionmodules.mmdit import OpenAISignatureMMDITWrapper
 import comfy.ldm.genmo.joint_model.asymm_models_joint
 import comfy.ldm.aura.mmdit
+import comfy.ldm.pixart.pixartms
 import comfy.ldm.hydit.models
 import comfy.ldm.audio.dit
 import comfy.ldm.audio.embedders
@@ -718,6 +719,25 @@ class HunyuanDiT(BaseModel):
         out['image_meta_size'] = comfy.conds.CONDRegular(torch.FloatTensor([[height, width, target_height, target_width, 0, 0]]))
         return out
 
+class PixArt(BaseModel):
+    def __init__(self, model_config, model_type=ModelType.EPS, device=None):
+        super().__init__(model_config, model_type, device=device, unet_model=comfy.ldm.pixart.pixartms.PixArtMS)
+
+    def extra_conds(self, **kwargs):
+        out = super().extra_conds(**kwargs)
+
+        cross_attn = kwargs.get("cross_attn", None)
+        if cross_attn is not None:
+            out['c_crossattn'] = comfy.conds.CONDRegular(cross_attn)
+
+        width = kwargs.get("width", None)
+        height = kwargs.get("height", None)
+        if width is not None and height is not None:
+            out["c_size"] = comfy.conds.CONDRegular(torch.FloatTensor([[height, width]]))
+            out["c_ar"] = comfy.conds.CONDRegular(torch.FloatTensor([[kwargs.get("aspect_ratio", height/width)]]))
+
+        return out
+
 class Flux(BaseModel):
     def __init__(self, model_config, model_type=ModelType.FLUX, device=None):
         super().__init__(model_config, model_type, device=device, unet_model=comfy.ldm.flux.model.Flux)
@@ -754,7 +774,6 @@ class Flux(BaseModel):
             mask = torch.ones_like(noise)[:, :1]
 
         mask = torch.mean(mask, dim=1, keepdim=True)
-        print(mask.shape)
         mask = utils.common_upscale(mask.to(device), noise.shape[-1] * 8, noise.shape[-2] * 8, "bilinear", "center")
         mask = mask.view(mask.shape[0], mask.shape[2] // 8, 8, mask.shape[3] // 8, 8).permute(0, 2, 4, 1, 3).reshape(mask.shape[0], -1, mask.shape[2] // 8, mask.shape[3] // 8)
         mask = utils.resize_to_batch_size(mask, noise.shape[0])
@@ -768,7 +787,7 @@ class Flux(BaseModel):
         cross_attn = kwargs.get("cross_attn", None)
         if cross_attn is not None:
             out['c_crossattn'] = comfy.conds.CONDRegular(cross_attn)
-        # upscale the attention mask, since now we 
+        # upscale the attention mask, since now we
         attention_mask = kwargs.get("attention_mask", None)
         if attention_mask is not None:
             shape = kwargs["noise"].shape
