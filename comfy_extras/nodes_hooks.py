@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Union
+import logging
 import torch
 from collections.abc import Iterable
 
@@ -32,7 +33,7 @@ class PairConditioningSetProperties:
                 "timesteps": ("TIMESTEPS_RANGE",),
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
     RETURN_NAMES = ("positive", "negative")
@@ -46,7 +47,7 @@ class PairConditioningSetProperties:
                                                                     strength=strength, set_cond_area=set_cond_area,
                                                                     mask=mask, hooks=hooks, timesteps_range=timesteps)
         return (final_positive, final_negative)
-    
+
 class PairConditioningSetPropertiesAndCombine:
     NodeId = 'PairConditioningSetPropertiesAndCombine'
     NodeName = 'Cond Pair Set Props Combine'
@@ -67,7 +68,7 @@ class PairConditioningSetPropertiesAndCombine:
                 "timesteps": ("TIMESTEPS_RANGE",),
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
     RETURN_NAMES = ("positive", "negative")
@@ -158,7 +159,7 @@ class PairConditioningCombine:
                 "negative_B": ("CONDITIONING",),
             },
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
     RETURN_NAMES = ("positive", "negative")
@@ -185,7 +186,7 @@ class PairConditioningSetDefaultAndCombine:
                 "hooks": ("HOOKS",),
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
     RETURN_NAMES = ("positive", "negative")
@@ -197,7 +198,7 @@ class PairConditioningSetDefaultAndCombine:
         final_positive, final_negative = comfy.hooks.set_default_conds_and_combine(conds=[positive, negative], new_conds=[positive_DEFAULT, negative_DEFAULT],
                                                                                    hooks=hooks)
         return (final_positive, final_negative)
-    
+
 class ConditioningSetDefaultAndCombine:
     NodeId = 'ConditioningSetDefaultCombine'
     NodeName = 'Cond Set Default Combine'
@@ -223,7 +224,7 @@ class ConditioningSetDefaultAndCombine:
         (final_conditioning,) = comfy.hooks.set_default_conds_and_combine(conds=[cond], new_conds=[cond_DEFAULT],
                                                                         hooks=hooks)
         return (final_conditioning,)
-    
+
 class SetClipHooks:
     NodeId = 'SetClipHooks'
     NodeName = 'Set CLIP Hooks'
@@ -239,7 +240,7 @@ class SetClipHooks:
                 "hooks": ("HOOKS",)
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("CLIP",)
     CATEGORY = "advanced/hooks/clip"
@@ -268,7 +269,7 @@ class ConditioningTimestepsRange:
                 "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001})
             },
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("TIMESTEPS_RANGE", "TIMESTEPS_RANGE", "TIMESTEPS_RANGE")
     RETURN_NAMES = ("TIMESTEPS_RANGE", "BEFORE_RANGE", "AFTER_RANGE")
@@ -289,7 +290,7 @@ class CreateHookLora:
     NodeName = 'Create Hook LoRA'
     def __init__(self):
         self.loaded_lora = None
-    
+
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -302,7 +303,7 @@ class CreateHookLora:
                 "prev_hooks": ("HOOKS",)
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "advanced/hooks/create"
@@ -315,7 +316,7 @@ class CreateHookLora:
 
         if strength_model == 0 and strength_clip == 0:
             return (prev_hooks,)
-        
+
         lora_path = folder_paths.get_full_path("loras", lora_name)
         lora = None
         if self.loaded_lora is not None:
@@ -325,7 +326,7 @@ class CreateHookLora:
                 temp = self.loaded_lora
                 self.loaded_lora = None
                 del temp
-        
+
         if lora is None:
             lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
             self.loaded_lora = (lora_path, lora)
@@ -347,7 +348,7 @@ class CreateHookLoraModelOnly(CreateHookLora):
                 "prev_hooks": ("HOOKS",)
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "advanced/hooks/create"
@@ -377,7 +378,7 @@ class CreateHookModelAsLora:
                 "prev_hooks": ("HOOKS",)
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "advanced/hooks/create"
@@ -400,7 +401,7 @@ class CreateHookModelAsLora:
                 temp = self.loaded_weights
                 self.loaded_weights = None
                 del temp
-        
+
         if weights_model is None:
             out = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths("embeddings"))
             weights_model = comfy.hooks.get_patch_weights_from_model(out[0])
@@ -425,7 +426,7 @@ class CreateHookModelAsLoraModelOnly(CreateHookModelAsLora):
                 "prev_hooks": ("HOOKS",)
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "advanced/hooks/create"
@@ -454,7 +455,7 @@ class SetHookKeyframes:
                 "hook_kf": ("HOOK_KEYFRAMES",),
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "advanced/hooks/scheduling"
@@ -480,7 +481,7 @@ class CreateHookKeyframe:
                 "prev_hook_kf": ("HOOK_KEYFRAMES",),
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOK_KEYFRAMES",)
     RETURN_NAMES = ("HOOK_KF",)
@@ -514,7 +515,7 @@ class CreateHookKeyframesInterpolated:
                 "prev_hook_kf": ("HOOK_KEYFRAMES",),
             },
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOK_KEYFRAMES",)
     RETURN_NAMES = ("HOOK_KF",)
@@ -539,7 +540,7 @@ class CreateHookKeyframesInterpolated:
                 is_first = False
             prev_hook_kf.add(comfy.hooks.HookKeyframe(strength=strength, start_percent=percent, guarantee_steps=guarantee_steps))
             if print_keyframes:
-                print(f"Hook Keyframe - start_percent:{percent} = {strength}")
+                logging.info(f"Hook Keyframe - start_percent:{percent} = {strength}")
         return (prev_hook_kf,)
 
 class CreateHookKeyframesFromFloats:
@@ -558,7 +559,7 @@ class CreateHookKeyframesFromFloats:
                 "prev_hook_kf": ("HOOK_KEYFRAMES",),
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOK_KEYFRAMES",)
     RETURN_NAMES = ("HOOK_KF",)
@@ -579,7 +580,7 @@ class CreateHookKeyframesFromFloats:
             raise Exception(f"floats_strength must be either an iterable input or a float, but was{type(floats_strength).__repr__}.")
         percents = comfy.hooks.InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=len(floats_strength),
                                                                method=comfy.hooks.InterpolationMethod.LINEAR)
-        
+
         is_first = True
         for percent, strength in zip(percents, floats_strength):
             guarantee_steps = 0
@@ -588,7 +589,7 @@ class CreateHookKeyframesFromFloats:
                 is_first = False
             prev_hook_kf.add(comfy.hooks.HookKeyframe(strength=strength, start_percent=percent, guarantee_steps=guarantee_steps))
             if print_keyframes:
-                print(f"Hook Keyframe - start_percent:{percent} = {strength}")
+                logging.info(f"Hook Keyframe - start_percent:{percent} = {strength}")
         return (prev_hook_kf,)
 #------------------------------------------
 ###########################################
@@ -603,7 +604,7 @@ class SetModelHooksOnCond:
                 "hooks": ("HOOKS",),
             },
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("CONDITIONING",)
     CATEGORY = "advanced/hooks/manual"
@@ -629,7 +630,7 @@ class CombineHooks:
                 "hooks_B": ("HOOKS",),
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "advanced/hooks/combine"
@@ -656,7 +657,7 @@ class CombineHooksFour:
                 "hooks_D": ("HOOKS",),
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "advanced/hooks/combine"
@@ -689,7 +690,7 @@ class CombineHooksEight:
                 "hooks_H": ("HOOKS",),
             }
         }
-    
+
     EXPERIMENTAL = True
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "advanced/hooks/combine"
